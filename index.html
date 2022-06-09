@@ -1,0 +1,2017 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>歌词制作</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" type="text/css" href="jquery-easyui-1.9.5/themes/default/easyui.css" />
+    <link href="jquery-easyui-1.9.5/themes/icon.css" rel="stylesheet" />
+    <link href="jquery-easyui-1.9.5/themes/color.css" rel="stylesheet" />
+    <script src="jquery-easyui-1.9.5/jquery.min.js"></script>
+    <script src="jquery-easyui-1.9.5/jquery.easyui.min.js"></script>
+    <script src="jquery-easyui-1.9.5/locale/easyui-lang-zh_CN.js"></script>
+    <script src="js/base.js"></script>
+    <script src="js/JCookie.js"></script>
+    <script type="text/javascript">
+
+        let LyricsType = "Lrc";//定义歌词类型，默认为lrc
+
+        /**
+         * 定义一个行歌词类，
+         * 用来把文本中每行数据，转换成一个行歌词对象
+         * */
+        class LrcLine {
+            constructor(time, line) {
+                this.time = time;
+                this.line = line;
+
+                this.isComplete = false;//标志当前行是否已经设置时间
+
+                this.timeArr = [];//压缩标签的时候，用来保存其它时间
+            }
+            get Time() {
+                return this.time;
+            }
+
+            set Time(value) {
+                this.time = value;
+            }
+
+            get Text() {
+                return this.line;
+            }
+
+            get IsComplete() {
+                return this.isComplete;
+            }
+            set IsComplete(value) {
+                this.isComplete = value;
+            }
+        }
+        ///压缩标签时，保存其它时间
+        LrcLine.prototype.AddTime = function (time) {
+            this.timeArr.push(time);
+        }
+        ///清除标签时，需要同时清除相应的合并信息
+        LrcLine.prototype.ClearTime = function (time) {
+            this.timeArr = [];
+        }
+
+        ///下载歌词时，生成歌词的时间标签
+        LrcLine.prototype.CreateTime = function (time) {
+            let arr = [];
+            arr.push(FormatterTime(this.time));
+            this.timeArr.forEach((t) => {
+                arr.push(FormatterTime(t));
+            });
+            return arr.join('');
+        }
+        /**krc歌词行对象中的字符 */
+        class KrcChars {
+            constructor(key) {
+                this.key = key;
+                this.startTime = 0;//字幕开始时间
+                this.splitTime = 0;//字幕持续时间
+
+
+
+                this.isComplete = false;//标志当前行是否已经设置时间
+            }
+
+            get StartTime() {
+                return this.startTime;
+            }
+            set StartTime(value) {
+                this.startTime = value;
+            }
+
+
+            get SplitTime() {
+                return this.splitTime;
+            }
+            set SplitTime(value) {
+                this.splitTime = value;
+            }
+            get IsComplete() {
+                return this.isComplete;
+            }
+            set IsComplete(value) {
+                this.isComplete = value;
+            }
+        }
+        KrcChars.prototype.GetKey = function () {
+            return `<span class='key ${(this.isComplete ? "complete" : "")}' data-start-time='${this.startTime}' data-split-time='${this.splitTime}'><span class='time' style='display:none;'><${this.startTime},${this.splitTime},0></span>${this.key}</span>`;
+        }
+        KrcChars.prototype.GetKeyTemp = function () {
+            return `<span class='key ${(this.isComplete ? "complete" : "")}' data-start-time='${this.startTime}' data-split-time='${this.splitTime}'>${this.key}</span>`;
+        }
+        KrcChars.prototype.GetKeyStr = function () {
+            return `<${this.startTime},${this.splitTime},0>${this.key}`;
+        }
+        /**只获取文本信息，不包含时间 */
+        KrcChars.prototype.GetKeyStrNoTime = function () {
+            return `${this.key}`;
+        }
+
+
+        //KRC歌词行对象
+        class KrcLine {
+            static Reg = /\[(\d+):(\d+).(\d+)\]/g;//定义一个正则对象，用来取出当前行的时间信息
+            constructor(line) {
+                this.keys = [];
+
+                let timeSplit = /^\[(\d+),(\d+)\]/g;
+                if (timeSplit.test(line)) {
+                    //包含时间信息
+                    let time = line.match(timeSplit)[0];//[10480,3169]
+                    time = time.substr(1, time.length - 2);//去队时间信息中的[]
+
+                    let arr = time.split(',');
+                    this.startTime = parseInt(arr[0]);//字幕开始时间
+                    this.splitTime = parseInt(arr[1]);//字幕持续时间
+
+                    line = line.replace(timeSplit, '');//去除开头的时间信息
+                    let splitReg = /<(\d+),(\d+),(\d+)>/g;///(\W|\w+)/g;
+                    //arr = line.match(splitReg);
+                    arr = line.trim().split(splitReg);// ['', '0', '200', '0', 'Leave ', '200', '226', '0', 'you ', '426', '871', '0', 'alone ', '1297', '167', '0', "I'm ", '1464', '336', '0', 'afraid']
+                    arr.shift();//去除第一个空元素['0', '200', '0', 'Leave ', '200', '226', '0', 'you ', '426', '871', '0', 'alone ', '1297', '167', '0', "I'm ", '1464', '336', '0', 'afraid']
+                    //for (let key of arr) {
+                    //    if (key != '') {
+                    //        this.keys.push(new KrcChars(key));
+                    //    }
+                    //}
+
+                    for (let i = 0; i < arr.length; i += 4) {
+                        //arr[i]开始时间 
+                        //arr[i+1]//持续时间
+                        //arr[i+2]//未知
+                        //arr[i+3]//歌词 
+                        var krcChars = new KrcChars(arr[i + 3]);
+                        krcChars.StartTime = parseInt(arr[i]);
+                        krcChars.SplitTime = parseInt(arr[i+1]);
+                        this.keys.push(krcChars);
+                    }
+                } else {
+                    //将行分解中KrcChars数组
+                    let splitReg = /(\W|\w+)/g;
+                    let arr = line.match(splitReg);
+                    for (let key of arr) {
+                        if (key != '') {
+                            this.keys.push(new KrcChars(key));
+                        }
+                    }
+                    this.startTime = 0;//字幕开始时间
+                    this.splitTime = 0;//字幕持续时间
+                }
+                this.isComplete = false;//标志当前行是否已经设置时间
+            }
+
+            get StartTime() {
+                return this.startTime;
+            }
+            set StartTime(value) {
+                this.startTime = value;
+            }
+
+
+            get SplitTime() {
+                return this.splitTime;
+            }
+            set SplitTime(value) {
+                this.splitTime = value;
+            }
+            get Keys() {
+                return this.keys;
+            }
+            get IsComplete() {
+                return this.isComplete;
+            }
+            set IsComplete(value) {
+                this.isComplete = value;
+            }
+        }
+        ///获取到逐字可以的每一行
+        KrcLine.prototype.GetLine = function () {
+            let html = [];
+            for (let i = 0; i < this.keys.length; i++) {
+                html.push(this.keys[i].GetKey())
+            }
+            return html.join('');
+        }
+        ///获取到逐字可以的每一行
+        KrcLine.prototype.GetLineTemp = function () {
+            let html = [];
+            for (let i = 0; i < this.keys.length; i++) {
+                html.push(this.keys[i].GetKeyTemp())
+            }
+            return html.join('');
+        }
+        /**
+         * 获取逐字歌词的每一行，下载歌词的时候使用
+         *  返回结果只有文本和时间标签，不包含HTML标签
+         * */
+        KrcLine.prototype.GetLineStr = function () {
+            let html = [];
+            for (let i = 0; i < this.keys.length; i++) {
+                html.push(this.keys[i].GetKeyStr())
+            }
+            return `[${this.startTime},${this.splitTime}]` + html.join('');
+        }
+
+         /**
+         * 获取逐字歌词的每一行，只获取文字信息，不包含时间，提交验证时使用
+         *  返回结果只有文本，不包含HTML标签
+         * */
+        KrcLine.prototype.GetKeyStrNoTime = function () {
+            let html = [];
+            for (let i = 0; i < this.keys.length; i++) {
+                html.push(this.keys[i].GetKeyStrNoTime())
+            }
+            return html.join('');
+        }
+
+
+
+
+
+        //用来保存标签合并行后有重复的行记录
+        const LrcLineRepeats = [];
+
+        //这里是用来解析歌词的,用来保存歌词的数组
+        const LrcLines = [];
+        ///是否显示时间为0的时间轴
+        let ShowZeroTime = false;
+        //是否有时间为0的时间轴
+        let HasZeroTime = false;
+        /**
+         * 读取歌词文件
+         * @param lines
+         */
+        function ReadIrc(lines) {
+            HasZeroTime = false;
+            if (!lines || lines.length==0 || lines.trim().length == 0) return;
+            LrcLines.length = 0;
+            LrcLineRepeats.length = 0;
+            let arr = lines.split(/[\r\n|\r|\n]+/);//用换行符将文本文件分隔成一个数据
+            if (LyricsType == "Lrc") {//逐行歌词
+                //遍历数组，将每一行文本转换成歌词对象
+                let reg = /\[(\d+):(\d+).(\d+)\]/g;//定义一个正则对象，用来取出当前行的时间信息
+                for (let o of arr) {
+                    if (reg.test(o)) {
+                        HasZeroTime = true;
+                        let _arr = o.match(reg);
+                        let line = o.replace(reg, '');
+                        for (let t of _arr) {//对应单行歌词中有多个时间轴
+                            var time = ReadTime(t);
+                            if (time == 0 && line.trim().length == 0) {
+                                //忽略掉时间轴及内容都为空的行
+                            } else {
+                                LrcLines.push(new LrcLine(ReadTime(t), line));
+                            }
+                        }
+                    } else {
+                        if (o.trim().length != 0) {
+                            LrcLines.push(new LrcLine(0, o));
+                        }
+                    } 
+                }
+                //ShowIrcToTemp();
+            }
+            else {
+                //制作逐字歌词
+                for (let o of arr) {
+                    if (KrcLine.Reg.test(o)) {
+                        o = o.replace(KrcLine.Reg, '');//如果加载的是lrc格式文件，则把其中的时间信息去除掉
+                    }
+                    if (o.length > 0)
+                        LrcLines.push(new KrcLine(o));
+                }
+            }
+            ShowIrcToMarker();
+        }
+
+        /**显示歌词到临时列表 */
+        function ShowIrcToTemp() {
+            ReloadIrcLines();
+
+            $("div.irc-show").css("display", "inline-block").html("");
+            $("div.irc-show-zip").hide();
+            $("div.irc-maker").css("width", "calc(95% - 500px)");
+            $("<ul></ul>").appendTo("div.irc-show");
+            if (LyricsType == "Lrc") {
+                for (let o of LrcLines) {
+                    $(`<li class='irc-item ${(o.IsComplete ? "completed" : "")}'>${o.Text}</li>`).appendTo("div.irc-show ul");
+                }
+            } else {
+                for (let o of LrcLines) {
+                    $(`<li class='irc-item ${(o.IsComplete ? "completed" : "")}'>${o.GetLineTemp()}</li>`).appendTo("div.irc-show ul");
+                }
+            }
+        }
+        /**显示压缩歌词到临时列表 */
+        function ShowZipIrcToTemp() {
+            if (!$("div.irc-show").is(":hidden")) {
+                $("#btnTempView").click();
+            }
+            $("div.irc-show-zip").css("display", "inline-block").html("");
+            $("div.irc-show").hide();
+            $("div.irc-maker").css("width", "calc(95% - 500px)");
+            $("<ul></ul>").appendTo("div.irc-show-zip");
+            for (let i = 0; i < LrcLines.length; i++) {
+                if (LrcLineRepeats.indexOf(i) > -1) continue;
+                let o = LrcLines[i];
+                $(`<li class='irc-item ${(o.IsComplete ? "completed" : "")}'><span class='time'>${o.CreateTime()}</span>${o.Text}</li>`).appendTo("div.irc-show-zip ul");
+            }
+        }
+
+
+
+
+        /**显示歌词到制作列表 */
+        function ShowIrcToMarker() {
+            $("div.irc-maker").html("");
+            if (LyricsType == "Lrc") {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    $(`<div class='irc-item  ${(LrcLines[i].IsComplete ? "completed" : "")}' data-index='${i}'><span class='time' ${((!HasZeroTime && !ShowZeroTime&& LrcLines[i].Time == 0 )? "style='display:none;'" : "")}  data-time='${LrcLines[i].Time}'>${FormatterTime(LrcLines[i].Time)}</span>${LrcLines[i].Text}</div>`).appendTo("div.irc-maker");
+                }
+
+                $("div.irc-maker>div").click(function (event) {
+                    event.stopPropagation();
+                    $("div.irc-maker>div.selected").removeClass("selected");
+                    $(this).addClass("selected");
+
+                    //如果已经设置了时间，则自动定位到前一行的时间播放
+                    var prev = $(this).prev("div");
+                    if (prev.length > 0) {
+                        audio[0].currentTime = LrcLines[parseInt(prev.attr("data-index"))].Time / 1000;
+                    } else {
+                        audio[0].currentTime = 0;//第一行时设定播放时间为0
+                    }
+                }).not(".completed").first().addClass("selected");
+            } else {
+                //逐字歌词
+                for (let i = 0; i < LrcLines.length; i++) {
+                    $(`<div class='irc-item  ${(LrcLines[i].IsComplete ? "completed" : "")}' data-index='${i}'><span class='time'  ${(LrcLines[i].StartTime == 0 && LrcLines[i].SplitTime == 0 ? "style='display:none;'" : "")} data-start-time='${LrcLines[i].StartTime}' data-split-time='${LrcLines[i].SplitTime}'>[${LrcLines[i].StartTime},${LrcLines[i].SplitTime}]</span>${LrcLines[i].GetLine()}</div>`).appendTo("div.irc-maker");
+                }
+
+                $("div.irc-maker>div").click(function (event) {
+                    event.stopPropagation();
+                    $("div.irc-maker>div.selected").removeClass("selected");
+                    $("div.irc-maker>div span.key.selected").removeClass("selected");
+                    $(this).addClass("selected");
+                    $(this).find("span.key").first().addClass("selected");
+
+
+                    //如果已经设置了时间，则自动定位到前一行的时间播放
+                    var prev = $(this).prev("div");
+                    if (prev.length > 0) {
+                        audio[0].currentTime = LrcLines[parseInt(prev.attr("data-index"))].StartTime / 1000;
+                    } else {
+                        audio[0].currentTime = 0;//第一行时设定播放时间为0
+                    }
+                }).not(".completed").first().addClass("selected");
+            }
+        }
+        /**判断时间轴是否有重复的 */
+        function CheckLrcRepeat() {
+            let flag = false;
+            if (LyricsType == "Lrc") {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    if (LrcLines[i].Time == 0) {
+                        continue;
+                    }
+                    for (let j = i + 1; j < LrcLines.length; j++) {
+                        if (LrcLines[j].Time == 0) {
+                            continue;
+                        }
+                        if (LrcLines[j].Time <= LrcLines[i].Time) {
+                            $("div.irc-maker").find("div.irc-item[data-index='" + j + "']").addClass("repeat");
+                            flag = true;
+                        }
+                    }
+                }
+            } else {
+
+            }
+            return flag;
+        }
+        //检查违禁字词
+        function CheckLrcEmpty() {
+            let flag = false;
+            if (LyricsType == "Lrc") {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    if (LrcLines[i].Text.trim().length == 0) {
+                        flag = true;
+                        break;
+                    } 
+                }
+            } else {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    console.log(LrcLines[i].GetKeyStrNoTime().trim())
+                    if (LrcLines[i].GetKeyStrNoTime().trim().length == 0) {
+                        flag = true;
+                        break;
+                    }
+                }
+            }
+            return flag;
+        }
+        /**检查违禁字词 */
+        function CheckKeyword() {
+            let flag = false;
+            var reg =/[(男|女|合唱|歌手)][:|：]/g;
+            if (LyricsType == "Lrc") {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    if (LrcLines[i].Text.trim().match(reg)) {
+                        flag = true;
+                        break;
+                    }
+                }
+            } else {
+                for (let i = 0; i < LrcLines.length; i++) {
+                    if (LrcLines[i].GetKeyStrNoTime().trim().match(reg)) {
+                        flag = true;
+                        break;
+                    }
+                }
+            }
+            return flag;
+        }
+
+        let PointNum = 2;//保存小数点位数
+
+        /**
+         * 将[00:00.000]格式的时间，转换成数字
+         * @param time
+         */
+        function ReadTime(time) {
+            let arr = time.split('');
+            arr.shift();//去除[
+            arr.pop();//去除]
+            //分钟
+            let min = parseInt(arr.shift()) * 10 + parseInt(arr.shift());
+
+            arr.shift();//去除分秒中间的标点
+
+            let second = parseInt(arr.shift()) * 10 + parseInt(arr.shift());
+            let mSecond = 0;
+            if (arr.length > 1) {//如果还有毫秒，则继续处理
+                arr.shift();//去除秒和毫秒中间的标点
+
+                mSecond = parseInt(arr.join('')) * (10 ** (3 - arr.length));//毫秒
+            }
+            return min * 60 * 1000 + second * 1000 + mSecond;
+        }
+
+        /**
+         * 将整数格式的时间转换成[00:00.000]
+         * @param time
+         */
+        function FormatterTime(time) {
+            let rtn = `[${FillZero(Math.floor(time / 60000), 2)}:${FillZero(Math.floor(time / 1000 % 60), 2)}`;//.${FillZero(Math.floor(time % 1000), 3)}]
+
+            if (PointNum > 0) {
+                time = time % 1000;
+                time = FillZero(Math.floor(time % 1000), 3);
+                rtn += `.${time.substring(0, PointNum)}`;//如果存在小数位数，则显示毫秒数
+            }
+            rtn += ']';//附加最后的括号
+            return rtn;
+        }
+    </script>
+    <script type="text/javascript">
+        let FileName = '';//保存音乐文件名，用来下载歌词时的默认名
+        $(function () {
+            //加载音乐文件事件
+            $("#btnMp3").change(function () {
+                let file = $(this)[0].files[0];
+                let fileType = file.name.substring(file.name.lastIndexOf('.') + 1);//获取扩展名
+                FileName = file.name.substring(0, file.name.lastIndexOf('.'));
+                if (fileType != "mp3" && fileType != "flac" && fileType != "wav") {
+                    alert("目前只支持.mp3,.flac,.wav\n请选择这三种格式！谢谢");
+                    return;
+                }
+                $("#Mp3Name").text(file.name);
+                loadMusicFile(file);
+            });
+            //加载歌词文件事件
+            $("#btnIrc").change(function () {
+                let file = $(this)[0].files[0];
+                let fileType = file.name.substring(file.name.lastIndexOf('.') + 1);//获取扩展名
+                console.log(fileType)
+                if (fileType != "lrc" && fileType != "txt") {
+                    alert("目前只支持.lrc,.txt\n请选择这两种格式！谢谢");
+                    return;
+                }
+                loadTxtFile(file);
+            });
+
+            //菜单栏事件
+            $("div.toolbar>ul>li").hover(function () {
+                if ($(this).find("ul").length > 0) {
+                    $(this).find("ul").show();
+                }
+            }, function () {
+                if ($(this).find("ul").length > 0) {
+                    $(this).find("ul").hide();
+                }
+            });
+        });
+
+        /*加载音乐文件*/
+        function loadMusicFile(file) {
+            let reader = new FileReader();
+            reader.onload = function (e) {
+                $("audio").attr("src", this.result);
+            }
+            reader.readAsDataURL(file);
+        }
+
+        //记录文本内容原记录
+        let SourceLine = null;
+
+        /*加载歌词文本文件*/
+        function loadTxtFile(file) {
+            let reader = new FileReader();
+            reader.onload = function (e) {
+                SourceLine = this.result;
+                ReadIrc(SourceLine);
+            }
+            reader.readAsText(file, Encoding);
+        }
+        /**选择MP3文件 */
+        function SelectMp3() {
+            isShowOffset = false;
+            OffsetTimeout = null;
+            $("#btnMp3").click();
+        }
+        /**选择歌词文件 */
+        function SelectIrc() {
+            $("#btnIrc").click();
+        }
+        let isShowOffset = false;
+        let OffsetTimeout = null;
+        function setTime() {
+            let duration = audio[0].currentTime;
+            let li = $("div.irc-maker div.selected");
+            let index = parseInt(li.attr("data-index"));
+            if (index >= LrcLines.length) return;
+
+            //时间偏移判断
+            duration = duration * 1000;
+            if (!isShowOffset && LyricsType == "Lrc") {
+                //时间有偏移
+                //这时先暂停音乐，提示偏移操作
+                if (LrcLines[index].Time != 0 && LrcLines[index].Time != duration) {
+                    let diff = LrcLines[index].Time - duration;
+                    $("#divOffset").show().find("a").unbind("click").click(function () {
+                        for (let i = index + 1; i < LrcLines.length; i++) {
+                            LrcLines[i].Time -= diff;
+                        }
+                        ShowIrcToMarker();
+                        $("#divOffset").hide();
+                        if (null != OffsetTimeout) {
+                            clearTimeout(OffsetTimeout);
+                            OffsetTimeout = null;
+                        }
+                    });
+                    isShowOffset = true;
+                    //OffsetTimeout = setTimeout(() => {
+                    //    $("#divOffset").hide();
+                    //    OffsetTimeout = null;
+                    //}, 5000);
+                }
+            } else {
+                $("#divOffset").hide();
+                if (null != OffsetTimeout) {
+                    clearTimeout(OffsetTimeout);
+                    OffsetTimeout = null;
+                }
+            }
+
+            li.find("span.time").text(FormatterTime(duration)).attr("data-time", duration).show();
+            LrcLines[index].Time = duration;
+            LrcLines[index].IsComplete = true;
+            li.removeClass("selected").addClass("completed");
+            li.find("~div").first().addClass("selected");
+
+            if (li.offset().top > $("div.irc-maker").height() / 2) {
+                $("div.irc-maker").scrollTop(($("div.irc-maker").scrollTop() + 50));
+            }
+        }
+        /**
+         *
+         * @param state 0：默认，设置当前开始时间，前面结束时间，1：只设置前面的结束时间，不设置当前的开始时间。2：只设置当前的开始时间，不设置前面的结束时间
+         */
+        function setTimeKrc(state) {
+            let duration = audio[0].currentTime;
+            let li = $("div.irc-maker >div.selected");
+            let index = parseInt(li.attr("data-index"));
+            if (index >= LrcLines.length) return;
+
+            duration = Math.floor(duration * 1000);
+            var key = li.find("span.key.selected");
+            var keyIndex = li.find("span.key").index(key);
+            if (state == 1) {
+                //停顿一下，只设置当前选择的时间
+                if (keyIndex == 0) {
+                    //第一个，设定此行的开始时间
+                    //同时设置前一行的持续时间
+                    if (index > 0) {
+                        LrcLines[index - 1].SplitTime = duration - LrcLines[index - 1].StartTime;
+                        LrcLines[index - 1].IsComplete = true;
+                        LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime = duration - LrcLines[index - 1].StartTime - LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].StartTime;
+                        LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].IsComplete = true;
+
+                        li.prev("div").find(">span.time").attr("data-split-time", LrcLines[index - 1].SplitTime).text(`[${LrcLines[index - 1].StartTime},${LrcLines[index - 1].SplitTime}]`).show();
+
+                        li.prev("div").find("span.key").last().attr("data-split-time", LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime).find("span.time").text(`<${LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].StartTime},${LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime},0>`);
+                    }
+                }
+                else if (keyIndex > 0) {//存在上一个
+                    LrcLines[index].Keys[keyIndex - 1].SplitTime = duration - LrcLines[index].StartTime - LrcLines[index].Keys[keyIndex - 1].StartTime;
+                    LrcLines[index].Keys[keyIndex - 1].IsComplete = true;
+                    key.prev().attr("data-split-time", LrcLines[index].Keys[keyIndex - 1].SplitTime).find("span.time").text(`<${LrcLines[index].Keys[keyIndex - 1].StartTime},${LrcLines[index].Keys[keyIndex - 1].SplitTime},0>`);
+                }
+
+            } else {
+                if (keyIndex == 0) {
+                    //第一个，设定此行的开始时间
+                    LrcLines[index].StartTime = duration;
+                    li.find(">span.time").attr("data-start-time", duration).text(`[${duration},0]`).show();
+                    if (state == 0) {
+                        //同时设置前一行的持续时间
+                        if (index > 0) {
+                            LrcLines[index - 1].SplitTime = duration - LrcLines[index - 1].StartTime;
+                            LrcLines[index - 1].IsComplete = true;
+                            LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime = duration - LrcLines[index - 1].StartTime - LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].StartTime;
+                            LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].IsComplete = true;
+                            li.prev("div").find(">span.time").attr("data-split-time", LrcLines[index - 1].SplitTime).text(`[${LrcLines[index - 1].StartTime},${LrcLines[index - 1].SplitTime}]`);
+
+
+                            li.prev("div").find("span.key").last().attr("data-split-time", LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime).find("span.time").text(`<${LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].StartTime},${LrcLines[index - 1].Keys[LrcLines[index - 1].Keys.length - 1].SplitTime},0>`);
+                        }
+                    }
+                }
+                else if (keyIndex > 0) {//存在上一个
+                    if (state == 0) {
+                        LrcLines[index].Keys[keyIndex - 1].SplitTime = duration - LrcLines[index].StartTime - LrcLines[index].Keys[keyIndex - 1].StartTime;
+                        LrcLines[index].Keys[keyIndex - 1].IsComplete = true;
+                        key.prev().attr("data-split-time", LrcLines[index].Keys[keyIndex - 1].SplitTime).find("span.time").text(`<${LrcLines[index].Keys[keyIndex - 1].StartTime},${LrcLines[index].Keys[keyIndex - 1].SplitTime},0>`);
+                    }
+                }
+
+                LrcLines[index].Keys[keyIndex].StartTime = duration - LrcLines[index].StartTime;
+                key.attr("data-start-time", LrcLines[index].Keys[keyIndex].StartTime).find("span.time").text(`<${LrcLines[index].Keys[keyIndex].StartTime},0,0>`);
+            }
+            if (li.offset().top > $("div.irc-maker").height() / 2) {
+                console.log(li.offset().top, $("div.irc-maker").height() / 2)
+                $("div.irc-maker").scrollTop(($("div.irc-maker").scrollTop() + 50));
+                console.log("@", $("div.irc-maker").scrollTop())
+            }
+        }
+
+
+
+        /**
+         * 空格按下事件
+         * @param event
+         */
+        function keyCode32(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.keyCode == 32
+                || event.originalEvent.code == "Space") {//空格键判断
+                setTime();
+            }
+        }
+        var isArrowDown = false;
+        /**
+         * Krc歌词按键事件
+         * @param event
+         */
+        function KrcKeyPress(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (event.keyCode == 32
+                || event.originalEvent.code == "Space") {//空格键判断
+                isArrowDown = false;
+                $("#btnPlay").click();
+            }
+            else if (event.keyCode == 38 || event.originalEvent.code == "ArrowUp") {//上
+                isArrowDown = false;
+                //回退一行
+                var index = $("div.irc-maker >div.selected").attr("data-index");
+                if (index > 0) {
+                    $("div.irc-maker >div.selected").removeClass("selected").find(".selected").removeClass("selected");
+                    $("div.irc-maker >div[data-index='" + (index - 1) + "']").addClass("selected").find("span.key").first().addClass("selected");;
+                }
+            }
+            else if (event.keyCode == 40 || event.originalEvent.code == "ArrowDown") {//下
+                if (!isArrowDown) {
+                    isArrowDown = true;
+                    setTimeKrc(1);
+                }
+            }
+            else if (event.keyCode == 37 || event.originalEvent.code == "ArrowLeft") {//左
+                isArrowDown = false;
+                var obj = $("div.irc-maker >div.selected").find("span.key.selected").removeClass("selected");
+                if (obj.prev("span.key").length > 0) {//存在上一个
+                    obj.prev("span.key").addClass("selected");
+                } else {
+                    //从上一行找
+                    $("div.irc-maker >div.selected").removeClass("selected").prev("div").addClass("selected").find("span.key").last().addClass("selected");
+                }
+            }
+            else if (event.keyCode == 39 || event.originalEvent.code == "ArrowRight") {//右
+                //设置时间
+                setTimeKrc(isArrowDown ? 2 : 0);
+                isArrowDown = false;
+                var obj = $("div.irc-maker >div.selected").find("span.key.selected").removeClass("selected");
+                if (obj.next("span.key").length > 0) {//存在下一个
+                    obj.next("span.key").addClass("selected");
+                } else {
+                    //从下一行找
+                    $("div.irc-maker >div.selected").removeClass("selected").next("div").addClass("selected").find("span.key").first().addClass("selected");
+                }
+            }
+        }
+
+        /**
+         * 空行删除
+         * */
+        function ClearEmptyLine() {
+            ReloadIrcLines(); 
+            let _LrcLines = LrcLines.filter((_line) => _line.Text.trim().length > 0);
+            LrcLines.splice(0, LrcLines.length);
+            LrcLines.push(..._LrcLines);
+            ShowIrcToMarker();
+        }
+        /**移除违禁字词 */
+        function ClearKeywords() {
+            ReloadIrcLines();
+            let reg = /[(男|女|合唱|歌手)][:|：]/g;
+            let _LrcLines  = LrcLines.filter((_line) => {
+                if (_line) {
+                    if (LyricsType == "Lrc") {
+                        return !_line.match(reg);
+                    } else {
+                        return !_line.GetKeyStrNoTime().match(reg);
+                    }
+                }
+                return false;
+            });
+
+            LrcLines.splice(0, LrcLines.length);
+            LrcLines.push(..._LrcLines);
+            ShowIrcToMarker();
+        }
+
+        /**
+         * 标签压缩，将歌词相同的行的时间合并到一起
+         * */
+        function ZipLine() {
+            ReloadIrcLines();
+            for (let i = 0; i < LrcLines.length - 1; i++) {
+                var line = LrcLines[i];
+                if (line.Time == 0) continue;
+                if (LrcLineRepeats.indexOf(i) > -1) continue;
+                for (let j = i + 1; j < LrcLines.length; j++) {
+                    if (LrcLineRepeats.indexOf(j) > -1) continue;
+                    if (line.Text == LrcLines[j].Text) {
+                        LrcLineRepeats.push(j);
+                        line.AddTime(LrcLines[j].Time);
+                    }
+                }
+            }
+            ShowZipIrcToTemp();
+        }
+        /**标签移除，清除掉所有的时间信息 */
+        function ClearTime() {
+            if (!confirm("是否确认清除标签？")) {
+                return;
+            }
+            ReloadIrcLines();
+            LrcLineRepeats.length = 0;//如何标签已合并，则会同时清除合并信息
+            LrcLines.forEach((line) => {
+                line.Time = 0;
+                line.ClearTime();
+            });
+            ShowIrcToMarker();
+        }
+
+        /**开启虚拟的空格键，这时候鼠标按钮可设定时间轴 */
+        function OpenVituralSpace(_this, event) {
+            event.stopPropagation();
+            if (LyricsType == "Lrc") {
+                setTime();
+            } else {
+                setTimeKrc(0);
+            }
+        }
+
+        function ReloadIrcLines() { 
+            let copy_content = [];
+            if (LyricsType == "Lrc") {
+                $("div.irc-maker>div").each(function () {
+                    copy_content.push($(this).text());
+                });
+            } else {
+                $("div.irc-maker>div").each(function () {
+                    let spanTime = $(this).find(">span.time");
+                    let text = '';
+                    if (spanTime.length>0)
+                        text+=`[${spanTime.attr("data-start-time")},${spanTime.attr("data-split-time")}]`;
+
+                    var keys = $(this).find("span.key");
+                    for (let key of keys) {
+                        if ($(key).find("span.time").length > 0) {
+                            text += $(key).text();
+                        } else {
+                            text += `<${$(key).attr("data-start-time")},${$(key).attr("data-split-time")},0>${$(key).text()}`;
+                        }
+                    }
+                    //keys = keys.clone();
+                    //keys.find("span.time").remove();
+                    //let text = $(this).text().trim();
+                    if (text.length > 0) {
+                        copy_content.push(text);
+                    }
+                });
+            }
+            copy_content = copy_content.join("\n");
+            if (copy_content !== SourceLine) {
+                console.log(copy_content)
+                //歌词改变，则重新加载
+                SourceLine = copy_content;
+                ReadIrc(SourceLine);
+            }
+        }
+
+        /**
+         * 开始制作，点击后会自动播放音频
+         * @param _this
+         */
+        function Start(_this) {
+            if (audio == null || audio.attr("src") == null || audio.attr("src") == undefined || audio.attr("src") == '') {
+                alert("请选择相应的MP3文件");
+                return;
+            }
+            $(_this).hide().addClass("selected");
+            $("#btnPause ").css("display", "inline-block");
+            $("#btnPause").addClass("selected");
+            if (LyricsType == "Lrc") {
+                $(document).unbind("keyup").bind("keyup", keyCode32);
+                $("div.irc-maker,div.irc-maker div").unbind("keyup").bind("keyup", keyCode32).bind("keydown", function (event) {
+                    event.preventDefault();
+                }).bind("keypress", function (event) {
+                    /*event.preventDefault();*/
+                });
+            }
+            else {
+
+                $(document).unbind("keyup").bind("keyup", KrcKeyPress);
+                //逐字歌词
+                $("div.irc-maker,div.irc-maker div").unbind("keyup").bind("keyup", KrcKeyPress).bind("keydown", function (event) {
+                    event.preventDefault();
+                }).bind("keypress", function (event) {
+                    event.preventDefault();
+                });
+                if ($("div.irc-maker span.key.selected").length == 0)
+                    $("div.irc-maker span.key").first().addClass("selected");
+            }
+            ReloadIrcLines();
+            setTimeout(() => {
+                ShowIrcToMarker();
+                audio[0].currentTime = 0;
+                $("#btnPlay").click();
+            }, 10);
+        }
+        /**
+         * 暂停制作
+         * @param _this
+         */
+        function Pause(_this) {
+            $(_this).hide();
+            $("#btnStart").css("display", "inline-block");
+
+            if (LyricsType == "Lrc") {
+                $(document).unbind("keyup")
+                $("div.irc-maker,div.irc-maker div").unbind("keyup").unbind("keydown").unbind("keypress");
+            }
+            else {
+                $(document).unbind("keyup")
+                $("div.irc-maker,div.irc-maker div").unbind("keyup").unbind("keydown").unbind("keypress");
+            }
+
+            audio[0].pause();
+        }
+        /**
+         * 停止制作
+         * @param _this
+         */
+        function Stop(_this) {
+            $("#btnPause ").hide().removeClass("selected");
+            $("#btnStart").css("display", "inline-block").removeClass("selected");
+            audio[0].stop();
+        } 
+    </script>
+    <!--这是播放进度条控制事件-->
+    <script type="text/javascript">
+        /*这是播放进度条控制事件*/
+        var audio = null;
+        var currTimeTarget = null;
+        var PlayedTime = null;
+        var timeOut = null;
+
+        function FillZero(p, index) {
+            return new Array(index - (p + '').length + 1).join('0') + p;
+        }
+
+        function SetCurrTime(time) {
+            if (null != timeOut) {
+                clearInterval(timeOut);
+            }
+
+            timeOut = setInterval(function () {
+                PlayedTime.text(FillZero(Math.floor(time / 60000), 2) + ":" + FillZero(Math.floor(time / 1000 % 60), 2) + "." + FillZero(Math.floor(time % 1000), 3));
+                if (audio[0].paused) {
+                    if (null != timeOut) {
+                        clearInterval(timeOut);
+                    }
+                    return;
+                }
+                time++;
+            }, 1);
+        }
+
+        $(function () {
+            audio = $("audio");
+            currTimeTarget = $("div.curr-time");
+            PlayedTime = $("span.played-time");
+
+            audio.on("loadeddata", function () {
+                var duration = audio[0].duration;
+                $("span.total-time,#lblSongTime").text(FillZero(Math.floor(duration / 60), 2) + ":" + FillZero(Math.floor(duration % 60), 2));
+                $("#time-range").attr("max", Math.floor(duration)).val(0);
+                SetCurrTime(0);
+                //PlayedTime.text(FillZero(Math.floor(time / 60000), 2) + ":" + FillZero(Math.floor(time / 1000 % 60), 2) + "." + FillZero(Math.floor(time % 1000), 3));
+            }).on("timeupdate", function () {
+                var duration = audio[0].currentTime;
+                SetCurrTime(duration * 1000);
+                //设置进度条
+                $("#time-range").val(duration);
+                //document.getElementById("time-range").value = duration;
+                //var max = audio.duration;
+                //var cur = audio.currentTime;
+                //$("progress").val(cur * 1.0 / max);
+                lineHighlight(duration * 1000);
+            }).on("play", function () {
+                $("#time-range").prop("disabled", false);
+            });
+            $("#time-range").change(function () {
+                var curr = $(this).val();
+                audio[0].currentTime = curr;
+            }).click(function () {
+                var curr = $(this).val();
+                audio[0].currentTime = curr;
+            }).mousedown(function (event) {
+                audio[0].pause();
+                audio[0].currentTime = event.offsetX / parseFloat($(this).width()) * parseInt($(this).attr("max"));
+                if (null != timeOut) {
+                    clearInterval(timeOut);
+                }
+            }).mouseup(function () {
+                audio[0].play();
+            });
+
+            $("body").on("keydown", function (event) {
+                //event.preventDefault();
+                event.stopPropagation();
+                //if (event.originalEvent.ctrlKey && event.originalEvent.code == "KeyV") {
+                //    console.log(event.clipboardData)
+                //    console.log(event)
+                //}
+                //if (event.ctrlKey && event.keyCode == 86) {//ctrl+V
+                //    document.execCommand("paste");
+                //}
+            });
+
+        });
+        document.addEventListener("paste", function (e) {
+
+            var clipboardData = e.clipboardData;
+            if (!(clipboardData && clipboardData.items)) {//是否有粘贴内容
+                return;
+            }
+
+            var copy_content = e.clipboardData.getData('text/plain');
+            SourceLine = copy_content;
+            ShowZeroTime = true;
+            setTimeout(() => {
+                ReadIrc(SourceLine);
+            }, 10);
+        });
+        /**切换播放与暂停 */
+        function Play(_this) {
+            if (audio == null || audio.attr("src") == null || audio.attr("src") == undefined || audio.attr("src") == '') {
+                alert("请选择相应的MP3文件");
+                return;
+            }
+
+            if (audio[0].paused) {
+                audio[0].play();
+                $(_this).find("a").text("暂停");
+            } else {
+                audio[0].pause();
+                $(_this).find("a").text("播放");
+            }
+        }
+        /**时间倒退5S */
+        function LastStep() {
+            if (audio == null || audio.attr("src") == null || audio.attr("src") == undefined || audio.attr("src") == '') {
+                return;
+            }
+
+            if (audio[0].currentTime > 5) {
+                audio[0].currentTime -= 5;
+            }
+        }
+        /**时间快进5S */
+        function NextStep() {
+            if (audio == null || audio.attr("src") == null || audio.attr("src") == undefined || audio.attr("src") == '') {
+                return;
+            }
+
+            if (audio[0].duration - audio[0].currentTime > 5) {
+                audio[0].currentTime += 5;
+            }
+        }
+
+        function PlaySpeedChange() {
+            var speed = parseFloat($("#slsSpeed").val());
+            audio[0].playbackRate = speed;
+        }
+    </script>
+    <!--歌词滚动-->
+    <script type="text/javascript">
+        //歌词滚动
+        function lineHighlight(time) {
+            $("div.irc-show ul li").removeClass("highlight");
+            //查找歌词数组中与当前时间匹配的歌词
+
+            var index = findIrcIndex(time);
+            if (index > -1) {
+                if (LyricsType == "Lrc") {
+                    $("div.irc-show ul li").eq(index).addClass("highlight");
+                    $("div.irc-show ul").css("top", "calc(50% - " + (21 * index) + "px)");
+                }
+                else {
+                    $("div.irc-show ul li span.key.highlight").removeClass("highlight");
+                    for (let i = 0; i < LrcLines[index].Keys.length; i++) {
+                        if (time > LrcLines[index].keys[i].StartTime + LrcLines[index].StartTime) {
+                            $("div.irc-show ul li").eq(index).find("span.key").eq(i).addClass("highlight");
+                        }
+                    }
+                    if ($("div.irc-show ul li span.key.highlight").length > 0) {
+                        $("div.irc-show ul").css("transform", "translateY(-" + ($("div.irc-show ul li span.key.highlight").position().top) + "px) translateX(-50%)");
+                    }
+                }
+            }
+        }
+
+        function findIrcIndex(time) {
+            for (let i = 0; i < LrcLines.length; i++) {
+                if (LyricsType == "Lrc") {
+                    if (time < LrcLines[i].Time) {
+                        return i - 1;
+                    } 
+                } else {
+                    if (time >= LrcLines[i].StartTime && time < LrcLines[i].StartTime + LrcLines[i].SplitTime) {
+                        return i;
+                    }
+                }
+            }
+
+            if (LyricsType == "Lrc") {
+                if (time > LrcLines[LrcLines.length - 1].Time) {
+                    return LrcLines.length - 1;
+                }
+            }
+            return -1;
+        }
+        /**预览效果 */
+        function TempView(_this) {
+            if ($(_this).hasClass("selected")) {
+                $("div.irc-show").hide().html("");
+                $("div.irc-maker").css("width", "95%");
+                $(_this).removeClass("selected")
+                $("#btnPlay").click();
+            } else {
+                $(_this).addClass("selected")
+                ShowIrcToTemp();
+                $("#btnPlay").click();
+            }
+        }
+    </script>
+    <!--生成歌词文件并保存-->
+    <script type="text/javascript">
+        /**获取制作好的歌词列表 */
+        function getIrcResult() {
+            let arr = [];
+            if (LyricsType == "Lrc") {
+                for (let o of LrcLines) {
+                    if (LrcLineRepeats.indexOf(o.Time) > -1) continue;
+                    arr.push(o.CreateTime() + o.Text);
+                }
+            } else {
+                //krc歌词
+                for (let o of LrcLines) {
+                    arr.push(o.GetLineStr());
+                }
+            }
+            return arr;
+        }
+
+        //生成歌词文件并保存
+        function SaveIrc() {
+            ReloadIrcLines();
+            let arr = getIrcResult();
+            //var blob = new Blob(arr);
+            //console.log(blob)
+            //var url = window.URL.createObjectURL(blob);
+            //console.log(url);
+            //window.open(url, null, null);
+            download(FileName + "." + LyricsType, arr.join("\n"));
+        }
+        /**保存歌词到数据库 */
+        function SaveIrcToData() {
+            debugger;
+            ReloadIrcLines();
+            //提交前检索空行
+            if (CheckLrcEmpty()) {
+                alert("有空行信息，请修改后再提交！");
+                return;
+            }
+            //检查违禁关键字
+            if (CheckKeyword()) {
+                alert("有禁止提交信息，请修改后再提交！\n比如：男：，女：，歌手：...");
+                return;
+            }
+            //提交前检查是否有重复的时间轴
+            if (CheckLrcRepeat()) {
+                alert("有重复的时间轴，请修改后再提交！");
+                return;
+            }
+            let arr = getIrcResult();
+            if (arr.length == 0 || arr.join("") == '') {
+                alert("未找到歌词内容，请作成后再提交！");
+                return;
+            }
+
+            if (!confirm("是否确认提交歌词？")) return;
+            $.post("./AjaxHandler.ashx?className=IrcMaker.TaskUploadService&action=SaveIrc",
+                {
+                    id: $("body").data("data-id"),
+                    LyricsType: LyricsType,
+                    lines: encodeURIComponent(arr.join("\n")),
+                    task_type: $("#SelfMaker").prop("checked") ? "Self" : ""
+                }, function (data) {
+                    data = $.parseJSON(data);
+                    if (data["code"] == base.ErrorType.Success) {
+                        location.href = "IrcMaker.html";
+                    } else {
+                        alert(unescape(data["msg"]));
+                    }
+                });
+        }
+
+        /**歌词无法完成 */
+        function SaveIrcError() {
+            $("#divCantComplete").dialog({
+                title: "歌曲无法完成",
+                width: 500,
+                height: 400,
+                modal: true
+            });
+            $("#divCantComplete").dialog("open");
+
+        }
+        /** 原因选择 **/
+        function SlsReasonChange() {
+            if ($("#slsReason").val() == "其他") {
+                $("#divReasonOther").show();
+            } else {
+                $("#divReasonOther").hide();
+            }
+        }
+        /**审核不通过取消 */
+        function Cancel() {
+            $("#divNoPassed").dialog("close");
+        }
+        /**提交 */
+        function Commit() {
+            $.post("./AjaxHandler.ashx?className=IrcMaker.TaskUploadService&action=SaveIrcError&id=" + $("body").data("data-id"), {
+                error: encodeURIComponent($("#slsReason").val()),
+                msg: encodeURIComponent($("#reasonOther").val())
+            }, function (data) {
+                data = $.parseJSON(data);
+                if (data["code"] == base.ErrorType.Success) {
+                    location.href = "IrcMaker.html";
+                } else {
+                    alert(unescape(data["msg"]));
+                }
+            });
+        }
+        function download(filename, text) {
+            var pom = document.createElement('a');
+            pom.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            pom.setAttribute('download', filename);
+            if (document.createEvent) {
+                var event = document.createEvent('MouseEvents');
+                event.initEvent('click', true, true);
+                pom.dispatchEvent(event);
+            } else {
+                pom.click();
+            }
+        }
+
+        /**复制信息 **/
+        function Copy(_this) {
+            var Url2 = $("#lblSongName").text() + " " + $("#lblSinger").text();
+            var oInput = document.createElement('input');
+            oInput.value = Url2;
+            document.body.appendChild(oInput);
+            oInput.select(); // 选择对象
+            document.execCommand("Copy"); // 执行浏览器复制命令
+            oInput.className = 'oInput';
+            oInput.style.display = 'none';
+            oInput.remove();
+            $(_this).text("已复制").linkbutton("disable");
+        }
+    </script>
+    <!--系统设定相关-->
+    <script type="text/javascript">
+        let Encoding = "gb2312";//文件编码，默认为gb2312
+        function SystemSet() {
+            $("span.system-set,div.system-set-bak").show();
+        }
+        /**提交系统设定的修改 */
+        function CommitSet() {
+            Encoding = $("#SlsEncoding").val();
+            //PointNum = $("#SlsPointNum").val();
+            ShowIrcToMarker();//重新显示歌词
+            if (!$("div.irc-show-zip").is(":hidden")) {
+                ShowZipIrcToTemp();
+            }
+            if (!$("div.irc-show").is(":hidden")) {
+                ShowIrcToTemp();
+            }
+
+            alert("设定已保存！");
+            $("span.system-set,div.system-set-bak").hide();
+            //重新加载歌词
+            if (confirm("是否重新加载歌词？\n重新加载可能导致歌词的修改丢失！！！")) {
+                $("#btnIrc").change();
+            }
+        }
+        /**取消系统设定 */
+        function CancelSet() {
+            $("span.system-set,div.system-set-bak").hide();
+        }
+
+        function Back() {
+            location.href = "Default.aspx";
+        }
+    </script>
+    <!--与后台交互部分-->
+    <script type="text/javascript">
+        $(function () {
+            $.getJSON("./AjaxHandler.ashx?className=IrcMaker.TaskUploadService&action=LoadTask",
+                {
+                    p: base.request("p"),
+                    task: base.request("task")
+                }, function (data) {
+                    if (data["code"] == base.ErrorType.Success) {
+                        data = data["data"];//$.parseJSON(data["data"]);
+                        $("audio").attr("src", data["song_url"]);
+                        $("#Mp3Name").html(data["song_name"] + "--" + data["singer"]);
+                        FileName = data["song_name"];
+                        $("#lblSongName").text(data["song_name"]);
+                        $("#lblSinger").text(data["singer"]);
+                        $("body").data("data-id", data["id"]); 
+                        LyricsType = data["task_type"];
+                        $("#TaskType_" + data["task_type"]).prop("checked", true);
+                        if (data["task_type"] == "Lrc") {
+                            $("#lblTip").text("lrc(逐行)");
+                        } else {
+                            $("#lblTip").text("krc(逐字)");
+                        }
+
+                        if (data["reason"]) {
+                            $("#Tip2").show();
+                            $("#lblTip2").text(data["reason"]+"   "+data["reason2"]);
+                        } else {
+                            $("#Tip2").hide();
+                        }
+
+                        if (data["line"]) {
+                            SourceLine = data["line"];
+                            ReadIrc(SourceLine);
+                        }
+
+                        if (data["Count"] && parseInt(data["Count"]) > 0) {
+                            $("#TaskCount").text(`剩余${data["Count"]}个任务`);
+                        }
+
+                        $("#keyWord").val(data["song_name"] + " " + data["singer"] + " lrc");
+                    } else {
+                        alert(unescape(data["msg"]));
+                    }
+                });
+        });
+
+        function Search() {
+            window.open("https://www.baidu.com/s?wd=" + encodeURIComponent( $("#keyWord").val()), null, null);
+        }
+    </script>
+    <style type="text/css">
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        /*页面头部菜单*/
+        div.header {
+            height: 100px;
+        }
+
+
+        /*页面内容*/
+        div.content {
+            height: calc(100% - 300px);
+            text-align: center;
+            position: relative;
+        }
+
+        div.footer {
+            padding: 0 20px;
+        }
+
+        /*<!--这是菜单部分样式-->*/
+        div.toolbar ul,
+        div.toolbar ul li {
+            display: inline-block;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            z-index: 999;
+            font-weight: bold;
+        }
+
+        div.toolbar > ul > li {
+            position: relative;
+        }
+
+        div.toolbar ul li a {
+            text-decoration: none;
+        }
+
+        div.toolbar ul li {
+            border-radius: 3px;
+            width: 100px;
+            height: 32px;
+            line-height: 32px;
+            text-align: center;
+        }
+
+            div.toolbar ul li:hover {
+                background-color: #D9D9D9;
+                cursor: pointer;
+            }
+
+        button.selected {
+            background-color: blue;
+            color: white;
+        }
+
+        div.toolbar ul li.selected {
+            background-color: blue;
+        }
+
+            div.toolbar ul li.selected a {
+                color: white;
+            }
+
+        div.toolbar ul.sub-tool {
+            display: none;
+            position: absolute;
+            bottom: 30px;
+        }
+
+            div.toolbar ul.sub-tool li {
+                display: block;
+                background-color: rgb(239,239,239);
+            }
+
+                div.toolbar ul.sub-tool li:hover {
+                    background-color: #D9D9D9;
+                    cursor: pointer;
+                }
+
+                div.toolbar ul.sub-tool li.selected {
+                    background-color: blue;
+                }
+
+                    div.toolbar ul.sub-tool li.selected a {
+                        color: white;
+                    }
+
+        #btnPause {
+            display: none;
+        }
+        /*<!--这是菜单部分样式End-->*/
+
+
+        /*<!--这是播放进度条部分样式-->*/
+        div.btn-audio-time {
+            display: inline-block;
+            vertical-align: top;
+            /*line-height: 50px;*/
+            position: absolute;
+            left: 20px;
+            text-align: left;
+        }
+
+            div.btn-audio-time span {
+                color: #a5a5a5;
+            }
+
+        div.slider {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+            div.slider progress,
+            div.slider input {
+                width: 100%;
+                z-index: 9;
+                margin: 20px 0;
+                box-sizing: border-box;
+            }
+
+        input[type="range"] {
+            background-size: 98% 3px;
+            margin: auto;
+            width: 80%;
+            background: linear-gradient(to right, #ccc 0%, #ccc 100%);
+            outline: none;
+            -webkit-appearance: none; /*清除系统默认样式*/
+            height: 3px; /*横条的高度*/
+        }
+
+            input[type="range"]::-webkit-slider-thumb {
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                background-color: #fff;
+                box-shadow: 0 0 2px rgba(0, 0, 0, 0.3), 0 3px 5px rgba(0, 0, 0, 0.2);
+                cursor: pointer;
+                -webkit-appearance: none;
+                border: 0;
+            }
+        /*<!--这是播放进度条部分样式End-->*/
+
+        div.play-tool {
+            text-align: center;
+            position: relative;
+        }
+
+            div.play-tool ul {
+                margin: 0 auto;
+            }
+
+        /*播放按钮*/
+        div.play-tool-btn > a {
+            vertical-align: middle;
+            line-height: 38px;
+            height: 32px;
+            display: inline-block;
+            box-sizing: border-box;
+            margin: 5px;
+            font-size: 25px;
+        }
+
+        span.xdeo-play-pause {
+            width: 60px;
+            height: 32px;
+            border-radius: 4px;
+            background-color: #0077fa;
+            background-size: 16px 16px;
+            box-sizing: border-box;
+            display: inline-block;
+            text-align: center;
+            line-height: 32px;
+            vertical-align: middle;
+            color: white;
+        }
+
+            span.xdeo-play-pause a {
+                color: white;
+                text-decoration: none;
+            }
+        /*滚动歌词样式*/
+        div.irc-show {
+            display: none;
+            width: 460px;
+            border: 1px solid silver;
+            text-align: center;
+            height: 98%;
+            overflow: auto;
+            overflow-y: hidden;
+            margin-left: 30px;
+            position: relative;
+        }
+
+            div.irc-show ul {
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                top: 50%;
+                width: 100%;
+                list-style: none;
+            }
+
+                div.irc-show ul li.highlight,
+                div.irc-show ul li span.highlight {
+                    color: Highlight;
+                    font-size: 1.3em;
+                    line-height: 2em;
+                    font-weight: bold;
+                }
+
+
+                div.irc-show ul li.completed span.time {
+                    color: red;
+                }
+        /*压缩歌词样式*/
+        div.irc-show-zip {
+            display: none;
+            width: 460px;
+            border: 1px solid silver;
+            text-align: left;
+            height: 98%;
+            overflow: auto;
+            overflow-y: hidden;
+            margin-left: 30px;
+            position: relative;
+        }
+
+            div.irc-show-zip ul {
+                position: absolute;
+            }
+
+
+        /*滚动歌词样式结束*/
+
+
+        div.irc-maker {
+            width: 95%;
+            border: 2px solid silver;
+            border-radius: 10px;
+            margin: 0 auto;
+            text-align: left;
+            height: 98%;
+            overflow: auto;
+            display: inline-block;
+            box-sizing: border-box;
+        }
+
+            div.irc-maker .selected {
+                box-shadow: 0 0 5px #4E4E4E;
+                padding: 10px
+            }
+
+            div.irc-maker > div {
+                margin: 0 auto;
+            }
+
+            div.irc-maker div {
+                text-align: left;
+            }
+
+            div.irc-maker div {
+                line-height: 29pt;
+            }
+
+                div.irc-maker div.selected {
+                    background-color: #DEDEDE;
+                }
+
+                div.irc-maker div span.time {
+                    color: orange;
+                    display: inline-block;
+                    margin: 0 20px 0 0;
+                }
+
+                div.irc-maker div.completed span.time {
+                    color: orange;
+                }
+
+                div.irc-maker div.repeat span.time {
+                    color: red;
+                }
+
+                div.irc-maker div span.key span.time {
+                    margin-right: 0;
+                }
+
+                div.irc-maker div span.key.selected {
+                    background-color: green;
+                }
+        /*系统设定*/
+        span.system-set {
+            position: absolute;
+            top: 0;
+            z-index: 999;
+            display: none;
+            left: 35%;
+            top: 30%;
+            font-size: 16pt;
+            border: 1px solid silver;
+            border-radius: 10px;
+            padding: 30px;
+        }
+
+            span.system-set * {
+                font-size: 16pt;
+            }
+
+        div.encoding {
+            text-align: left;
+        }
+
+            div.encoding span {
+                display: inline-block;
+                text-align: left;
+                width: 240px;
+                padding-left: 40px;
+            }
+        /*系统设定背景模板*/
+        div.system-set-bak {
+            z-index: 99;
+            display: none;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: white;
+        }
+
+        #divOffset {
+            position: absolute;
+            left: 60%;
+            top: 45%;
+            font-size: 16pt;
+            border: 1px solid silver;
+            border-radius: 5px;
+            padding: 20px;
+        }
+
+            #divOffset a {
+                font-size: 18pt;
+                margin: 0 10px;
+            }
+
+        div.lyric-editor_toolbar {
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            padding: 12px;
+            width: 52px;
+            display: inline-block;
+            vertical-align: top;
+        }
+
+            div.lyric-editor_toolbar svg {
+                cursor: pointer;
+                margin: 10px auto;
+                display: inline-block;
+                padding: 10px;
+            }
+
+                div.lyric-editor_toolbar svg.selected {
+                    color: #0077fa;
+                    background-color: #e2e8f7;
+                }
+
+                div.lyric-editor_toolbar svg:hover {
+                    background-color: #e2e8f7;
+                }
+
+
+        .lyric-editor_button-group > .lyric-editor_button + .lyric-editor_button {
+            border-left: 1px solid #e3e4e5;
+        }
+
+        .lyric-editor_button-group > .lyric-editor_button {
+            border-radius: 0;
+        }
+
+        .lyric-editor_button--light--primary {
+            background-color: rgba(46, 50, 56, 0.05);
+            color: #0077fa;
+        }
+
+        .lyric-editor_button {
+            margin: 0;
+            padding: 6px 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 32px;
+            font-size: 14px;
+            line-height: 20px;
+            font-weight: 600;
+            border: 0 solid transparent;
+            border-radius: 3px;
+            vertical-align: middle;
+            white-space: nowrap;
+            outline: none;
+            box-shadow: none;
+            user-select: none;
+            cursor: pointer;
+        }
+
+        .lyric-editor * {
+            box-sizing: border-box;
+        }
+
+        span.key{
+            margin:0 5px;
+        }
+
+        [type=button], [type=reset], [type=submit], button {
+            -webkit-appearance: button;
+        }
+
+        #lblSongName,
+        #lblSinger {
+            display: inline-block;
+            max-width: 230px;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            vertical-align:middle;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 一些隐藏的控件，比如选择文件，及音乐播放控件 -->
+    <div style="display:none;">
+        <input type="file" id="btnMp3" accept="audio/mp3,audio/flac,audio/wav" />
+        <audio controls></audio>
+        <input type="file" id="btnIrc" accept=".txt, .lrc" />
+    </div>
+    <div class="header easyui-panel" style="position:relative;">
+        <div style="text-align:center;padding:10px 0;display:none;">
+            <input type="text" style="font-size:16pt;width:300px;" id="keyWord"/>
+            
+        </div>
+        <div style="position:absolute;bottom:20px;left:50px;">
+            <label style="font-weight:bolder;">歌曲名：</label><label id="lblSongName"></label>
+            <label style="font-weight:bolder;margin-left:20px;">歌手：</label><label id="lblSinger"></label>
+            <label style="font-weight:bolder;margin-left:20px;">时长：</label><label id="lblSongTime"></label>
+            <a href="javascript:void(0)" style=" margin-left:20px;" class="easyui-linkbutton" onclick="Copy(this)">复制</a>
+            <a href="javascript:void(0)" style=" margin-left:20px;" class="easyui-linkbutton" onclick="Search()">搜索</a> 
+            <a href="javascript:void(0)" style=" margin-left:20px;" class="easyui-linkbutton" onclick="Back()">返回列表</a>
+            <span>提示：本任务需要提交<strong id="lblTip" style="font-size:1.2em;"></strong>歌词</span>
+            <span style="display:none;" id="Tip2">提示：审核未通过；原因：<strong id="lblTip2" style="font-size:1.2em;"></strong></span>
+        </div>
+        <span style="float:right;top:20px;padding-right:30px;" id="TaskCount"></span>
+    </div>
+    <div class="content">
+        <!--歌词制作-->
+        <div class="irc-maker" contenteditable="true"></div>
+        <!--歌词展示-->
+        <div class="irc-show"></div>
+        <!--歌词展示-->
+        <div class="irc-show-zip"></div>
+        <!--系统设定-->
+        <span class="system-set">
+            <div class="encoding">
+                <span>编码格式：</span>
+                <select id="SlsEncoding">
+                    <option value="gb2312">GB2312</option>
+                    <option value="utf8">UTF-8</option>
+                </select>
+            </div>
+            <div class="encoding">
+                <span>小数点位数：</span>
+                <select id="SlsPointNum">
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                </select>
+            </div>
+            <div style="padding:20px 0 0;">
+                <button onclick="CommitSet()">确定</button>
+                <button onclick="CancelSet()">取消</button>
+            </div>
+        </span>
+        <div class="system-set-bak"></div>
+
+        <div id="divOffset" style="display:none;">
+            <label>是否以此为基准偏移所有的时间标签</label><a href="javascript:void(0)">是的</a>
+        </div>
+        <div class="lyric-editor_toolbar">
+            <svg onclick="TempView(this)" id="btnTempView" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M21.7071 3.70711C22.0976 3.31658 22.0976 2.68342 21.7071 2.29289C21.3166 1.90237 20.6834 1.90237 20.2929 2.29289L17.3135 5.27233C15.8114 4.50566 14.0321 4 12 4C5 4 1 10 1 12C1 13.1757 2.38219 15.7335 4.94345 17.6423L2.29289 20.2929C1.90237 20.6834 1.90237 21.3166 2.29289 21.7071C2.68342 22.0976 3.31658 22.0976 3.70711 21.7071L21.7071 3.70711ZM7.8284 14.7574L9.29237 13.2934C9.10495 12.9018 9 12.4631 9 12C9 10.3431 10.3431 9 12 9C12.4631 9 12.9018 9.10495 13.2934 9.29237L14.7574 7.8284C13.967 7.30488 13.0191 7 12 7C9.23858 7 7 9.23858 7 12C7 13.0191 7.30488 13.967 7.8284 14.7574Z" fill="currentColor">
+                </path>
+                <path d="M12 20C10.7789 20 9.64914 19.8174 8.61594 19.5054L11.1871 16.9342C11.4516 16.9775 11.7232 17 12 17C14.7614 17 17 14.7614 17 12C17 11.7232 16.9775 11.4516 16.9342 11.1871L20.5032 7.61808C22.1342 9.27317 23 11.0695 23 12C23 14 19 20 12 20Z" fill="currentColor">
+                </path>
+            </svg>
+            <svg onclick="SystemSet()" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" class="">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M7.99973 5.07197C7.19713 5.53535 6.20729 5.53113 5.40866 5.06092L5.1637 4.91669C4.55751 4.55978 3.77662 4.65563 3.34264 5.20927C2.69567 6.03462 2.17585 6.94251 1.79166 7.90124C1.53027 8.55354 1.83733 9.27693 2.449 9.62286L2.69407 9.76145C3.50107 10.2178 4.00002 11.0732 4.00002 12.0003C4.00002 12.9271 3.50145 13.7822 2.69492 14.2387L2.44842 14.3783C1.83596 14.725 1.52888 15.4497 1.79213 16.1024C1.98358 16.577 2.21048 17.044 2.47374 17.5C2.73723 17.9564 3.0285 18.3868 3.34416 18.7902C3.77773 19.3443 4.5588 19.4406 5.16498 19.0834L5.40839 18.9399C6.20714 18.4692 7.19739 18.4648 8.0003 18.9284C8.80291 19.3918 9.29417 20.2511 9.28627 21.1778L9.28386 21.4601C9.27787 22.1629 9.75107 22.7906 10.4468 22.8903C11.4692 23.0368 12.5154 23.0404 13.5537 22.8927C14.2499 22.7936 14.7231 22.1653 14.7169 21.462L14.7143 21.1785C14.7061 20.2514 15.1974 19.3916 16.0003 18.928C16.8029 18.4647 17.7927 18.4689 18.5914 18.9391L18.8363 19.0833C19.4425 19.4402 20.2234 19.3444 20.6574 18.7907C21.3044 17.9654 21.8242 17.0575 22.2084 16.0988C22.4698 15.4465 22.1627 14.7231 21.551 14.3772L21.306 14.2386C20.499 13.7822 20 12.9268 20 11.9997C20 11.0729 20.4986 10.2178 21.3051 9.76126L21.5516 9.62174C22.1641 9.27506 22.4712 8.55029 22.2079 7.89761C22.0165 7.42297 21.7896 6.95598 21.5263 6.50001C21.2628 6.04362 20.9715 5.61325 20.6559 5.20982C20.2223 4.65568 19.4412 4.55944 18.8351 4.91665L18.5916 5.06009C17.7929 5.53078 16.8026 5.53519 15.9997 5.07163C15.1971 4.60825 14.7059 3.74891 14.7138 2.82218L14.7162 2.53994C14.7222 1.83708 14.249 1.20945 13.5532 1.10973C12.5308 0.963214 11.4846 0.959581 10.4464 1.10733C9.75011 1.20641 9.27691 1.83473 9.28317 2.53798L9.28569 2.82154C9.29395 3.74862 8.80264 4.60841 7.99973 5.07197ZM14 15.4641C15.9132 14.3595 16.5687 11.9132 15.4641 9.99999C14.3595 8.08682 11.9132 7.43132 10 8.53589C8.08684 9.64046 7.43134 12.0868 8.53591 14C9.64048 15.9132 12.0868 16.5687 14 15.4641Z" fill="currentColor">
+                </path>
+            </svg>
+        </div>
+    </div>
+    <div class="footer">
+        <!--按钮部分-->
+        <div class="toolbar">
+            <button onclick="Start(this)" id="btnStart" type="button" class="lyric-editor_button lyric-editor_button--solid--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                     width="1em" height="1em" focusable="false">
+                    <path d="M5 2.90101C5 2.09583 5.90303 1.62081 6.56653 2.07697L19.8014 11.1759C20.3794 11.5733 20.3794 12.4267 19.8014 12.824L6.56653 21.923C5.90303 22.3792 5 21.9041 5 21.0989V2.90101Z"
+                          fill="currentColor">
+                    </path>
+                </svg>
+                <span>
+                    开始制作
+                </span>
+            </button>
+
+            <button onclick="Pause(this)" id="btnPause" type="button" class="lyric-editor_button lyric-editor_button--solid--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                     width="1em" height="1em" focusable="false">
+                    <path d="M5 2.90101C5 2.09583 5.90303 1.62081 6.56653 2.07697L19.8014 11.1759C20.3794 11.5733 20.3794 12.4267 19.8014 12.824L6.56653 21.923C5.90303 22.3792 5 21.9041 5 21.0989V2.90101Z"
+                          fill="currentColor">
+                    </path>
+                </svg>
+                <span>
+                    暂停制作
+                </span>
+            </button>
+            <div style="display:inline;">
+                <label>
+                    制作类型:
+                </label>
+                <input type="radio" disabled id="TaskType_Lrc" value="Lrc" name="TaskType" /><label for="TaskType_Lrc">lrc(逐行)歌词</label>
+                <input type="radio" disabled id="TaskType_Krc" value="Krc" name="TaskType" /><label for="TaskType_Lrc">krc(逐字)歌词</label>
+            </div>
+            <ul> 
+                <li class="lyric-editor_button lyric-editor_button--light--primary">
+                    <a href="javascript:void(0)"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" aria-hidden="true"><path d="M9 2C7.89543 2 7 2.89543 7 4V5H16C18 5 19 6 19 8V17H20C21.1046 17 22 16.1046 22 15V4C22 2.89543 21.1046 2 20 2H9Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M3 9C3 7.89543 3.89543 7 5 7H15C16.1046 7 17 7.89543 17 9V19C17 20.1046 16.1046 21 15 21H5C3.89543 21 3 20.1046 3 19V9ZM9 11C9 10.4477 9.44772 10 10 10C10.5523 10 11 10.4477 11 11V13H13C13.5523 13 14 13.4477 14 14C14 14.5523 13.5523 15 13 15H11V17C11 17.5523 10.5523 18 10 18C9.44772 18 9 17.5523 9 17V15H7C6.44772 15 6 14.5523 6 14C6 13.4477 6.44772 13 7 13H9V11Z" fill="currentColor"></path></svg>工具</a>
+                    <ul class="sub-tool">
+                        <li onclick="ClearEmptyLine()"><a href="javascript:void(0)">空行删除</a></li>
+                        <li onclick="ZipLine()"><a href="javascript:void(0)">标签压缩</a></li>
+                        <li onclick="ClearTime()"><a href="javascript:void(0)">标签移除</a></li>
+                        <li onclick="ClearKeywords()"><a href="javascript:void(0)">移除歌手信息</a></li>
+                    </ul>
+                </li>
+            </ul>
+            <button onclick="OpenVituralSpace(this,event)" type="button" class="lyric-editor_button lyric-editor_button--light--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" aria-hidden="true"><path d="M9 2C7.89543 2 7 2.89543 7 4V5H16C18 5 19 6 19 8V17H20C21.1046 17 22 16.1046 22 15V4C22 2.89543 21.1046 2 20 2H9Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M3 9C3 7.89543 3.89543 7 5 7H15C16.1046 7 17 7.89543 17 9V19C17 20.1046 16.1046 21 15 21H5C3.89543 21 3 20.1046 3 19V9ZM9 11C9 10.4477 9.44772 10 10 10C10.5523 10 11 10.4477 11 11V13H13C13.5523 13 14 13.4477 14 14C14 14.5523 13.5523 15 13 15H11V17C11 17.5523 10.5523 18 10 18C9.44772 18 9 17.5523 9 17V15H7C6.44772 15 6 14.5523 6 14C6 13.4477 6.44772 13 7 13H9V11Z" fill="currentColor"></path></svg>
+                <span>
+                    space
+                </span>
+            </button>
+
+            <button onclick="SelectIrc()" type="button" class="lyric-editor_button lyric-editor_button--light--primary">
+                <svg onclick="SelectMp3()" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" style="width: 20px; height: 20px; color: rgb(0, 0, 0); cursor: pointer;">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M2 5C2 3.34315 3.34315 2 5 2H8.29844C8.75258 2 9.1932 2.15456 9.54783 2.43826L10.6783 3.34261C11.2102 3.76816 11.8711 4 12.5523 4H18C20 4 21 6 21 8H7.53361C6.62889 8 5.83683 8.60735 5.6021 9.48109L2.57151 20.7617C2.21202 20.2671 2 19.6583 2 19V5ZM22.1667 10H9.5C8.61111 10 7.82889 10.5867 7.58 11.44L4.87333 20.72C4.68667 21.36 5.16667 22 5.83333 22H18.5C19.3889 22 20.1711 21.4133 20.42 20.56L23.1267 11.28C23.3133 10.64 22.8333 10 22.1667 10Z" fill="currentColor">
+                    </path>
+                </svg>
+                <span>
+                    加载歌词
+                </span>
+            </button>
+
+            <button onclick="SaveIrc()" type="button" class="lyric-editor_button lyric-editor_button--light--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.08045 7.59809C4.66624 7.01231 5.61599 7.01231 6.20177 7.59809L11.8586 13.2549L17.5155 7.59809C18.1013 7.01231 19.051 7.01231 19.6368 7.59809C20.2226 8.18388 20.2226 9.13363 19.6368 9.71941L12.9193 16.4369C12.3335 17.0227 11.3838 17.0227 10.798 16.4369L4.08045 9.71941C3.49467 9.13363 3.49467 8.18388 4.08045 7.59809Z" fill="currentColor"></path></svg>
+
+                <span>
+                    导出歌词
+                </span>
+            </button>
+            <div style="display:inline;">
+                <input type="checkbox" id="SelfMaker" value="Self" name="MakerType" />
+                <label for="SelfMaker">
+                    自我制作
+                </label>
+            </div>
+            <button onclick="SaveIrcToData()" type="button" class="lyric-editor_button lyric-editor_button--light--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.08045 7.59809C4.66624 7.01231 5.61599 7.01231 6.20177 7.59809L11.8586 13.2549L17.5155 7.59809C18.1013 7.01231 19.051 7.01231 19.6368 7.59809C20.2226 8.18388 20.2226 9.13363 19.6368 9.71941L12.9193 16.4369C12.3335 17.0227 11.3838 17.0227 10.798 16.4369L4.08045 9.71941C3.49467 9.13363 3.49467 8.18388 4.08045 7.59809Z" fill="currentColor"></path></svg>
+
+                <span>
+                    提交歌词
+                </span>
+            </button>
+            <button onclick="SaveIrcError()" type="button" class="lyric-editor_button lyric-editor_button--light--primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.08045 7.59809C4.66624 7.01231 5.61599 7.01231 6.20177 7.59809L11.8586 13.2549L17.5155 7.59809C18.1013 7.01231 19.051 7.01231 19.6368 7.59809C20.2226 8.18388 20.2226 9.13363 19.6368 9.71941L12.9193 16.4369C12.3335 17.0227 11.3838 17.0227 10.798 16.4369L4.08045 9.71941C3.49467 9.13363 3.49467 8.18388 4.08045 7.59809Z" fill="currentColor"></path></svg>
+
+                <span>
+                    无法完成
+                </span>
+            </button>
+        </div>
+        <!--按钮部分结束-->
+        <!--播放进度条-->
+        <div class="play">
+
+            <div class="slider time-slider">
+                <input type="range" disabled id="time-range" step="1" min="0" value="0" />
+            </div>
+            <div class="play-tool toolbar">
+                <div class="btn-audio-time">
+                    <div id="Mp3Name"></div>
+                    <span class="played-time">00:00.000</span>/<span class="total-time">00:00.000</span>
+                </div>
+                <div class="play-tool-btn">
+                    <a onclick="LastStep()" href="javascript:void(0)">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" class="lyric-editor_playable_play-pause-render_backward">
+                            <path d="M12 18.0362C12 18.8535 11.0728 19.3257 10.4118 18.845L2.11202 12.8087C1.56292 12.4094 1.56292 11.5906 2.11202 11.1913L10.4118 5.15502C11.0728 4.67432 12 5.14647 12 5.96376V18.0362Z" fill="currentColor">
+                            </path>
+                            <path d="M23 18.0362C23 18.8535 22.0728 19.3257 21.4118 18.845L13.112 12.8087C12.5629 12.4094 12.5629 11.5906 13.112 11.1913L21.4118 5.15502C22.0728 4.67432 23 5.14647 23 5.96376V18.0362Z" fill="currentColor">
+                            </path>
+                        </svg>
+                    </a>
+                    <span onclick="Play(this)" class="selected xdeo-play-pause lyric-editor_playable_play-pause-render_play-pause" id="btnPlay"><a href="javascript:void(0)">播放</a></span>
+                    <a onclick="NextStep()" href="javascript:void(0)">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" class="lyric-editor_playable_play-pause-render_fastforward">
+                            <path d="M1 5.96376C1 5.14647 1.9272 4.67432 2.58817 5.15502L10.888 11.1913C11.4371 11.5906 11.4371 12.4094 10.888 12.8087L2.58817 18.845C1.9272 19.3257 1 18.8535 1 18.0362V5.96376Z" fill="currentColor">
+                            </path>
+                            <path d="M12 5.96376C12 5.14647 12.9272 4.67432 13.5882 5.15502L21.888 11.1913C22.4371 11.5906 22.4371 12.4094 21.888 12.8087L13.5882 18.845C12.9272 19.3257 12 18.8535 12 18.0362V5.96376Z" fill="currentColor">
+                            </path>
+                        </svg>
+                    </a>
+                </div>
+                <div  class="btn-audio-time" style="display:inline-block;position:absolute;right:60px;left:initial;top:0;">
+                    <label >播放速度</label>
+                    <select onchange="PlaySpeedChange()" id="slsSpeed">
+                        <option value="0.5">x0.50</option>
+                        <option value="0.75">x0.75</option>
+                        <option value="1" selected>x1.00</option>
+                        <option value="1.5">x1.50</option>
+                        <option value="2">x2.00</option>
+                    </select>
+                </div>
+                <div class="btn-audio-time" style="display:inline-block;position:absolute;right:20px;left:initial;top:0;">
+                    <svg onclick="SelectMp3()" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" style="width: 20px; height: 20px; color: rgb(0, 0, 0); cursor: pointer;">
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M2 5C2 3.34315 3.34315 2 5 2H8.29844C8.75258 2 9.1932 2.15456 9.54783 2.43826L10.6783 3.34261C11.2102 3.76816 11.8711 4 12.5523 4H18C20 4 21 6 21 8H7.53361C6.62889 8 5.83683 8.60735 5.6021 9.48109L2.57151 20.7617C2.21202 20.2671 2 19.6583 2 19V5ZM22.1667 10H9.5C8.61111 10 7.82889 10.5867 7.58 11.44L4.87333 20.72C4.68667 21.36 5.16667 22 5.83333 22H18.5C19.3889 22 20.1711 21.4133 20.42 20.56L23.1267 11.28C23.3133 10.64 22.8333 10 22.1667 10Z" fill="currentColor">
+                        </path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        <!--播放进度条结束-->
+    </div>
+
+    <!--歌曲无法完成-->
+    <div id="divCantComplete" style="display:none;">
+        <div class="easyui-panel" style="padding:20px;">
+            <label>请选择原因：</label>
+            <select id="slsReason" onchange="SlsReasonChange()">
+                <option value="找不到歌词">1、找不到歌词</option>
+                <option value="纯音乐">2、纯音乐</option>
+                <option value="歌曲伴奏">3、歌曲伴奏</option>
+                <option value="DJ">4、DJ</option>
+                <option value="小语种">5、小语种</option>
+                <option value="歌曲偏移差距过大">6、歌曲偏移差距过大</option>
+                <option value="其他">7、其他</option>
+            </select>
+            <div id="divReasonOther" style="display:none;">
+                <label>请输入具体原因</label>
+                <textarea style="width:90%;height:200px;" id="reasonOther" placeholder="具体原因"></textarea>
+            </div>
+            <div style="text-align:center;margin-top:20px;">
+                <button class="easyui-linkbutton" onclick="Commit()">提交</button>
+                <button class="easyui-linkbutton" onclick="Cancel()">取消</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
